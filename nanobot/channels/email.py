@@ -57,6 +57,7 @@ class EmailChannel(BaseChannel):
         self._last_message_id_by_chat: dict[str, str] = {}
         self._processed_uids: set[str] = set()  # Capped to prevent unbounded growth
         self._MAX_PROCESSED_UIDS = 100000
+        self._initial_fetch_done: bool = False
 
     async def start(self) -> None:
         """Start polling IMAP for inbound emails."""
@@ -74,6 +75,13 @@ class EmailChannel(BaseChannel):
         logger.info("Starting Email channel (IMAP polling mode)...")
 
         poll_seconds = max(5, int(self.config.poll_interval_seconds))
+        
+        # Mark existing messages as processed on startup without triggering events
+        try:
+            await asyncio.to_thread(self._mark_initial_messages_processed)
+        except Exception as e:
+            logger.error("Error marking initial emails as processed: {}", e)
+
         while self._running:
             try:
                 inbound_items = await asyncio.to_thread(self._fetch_new_messages)
@@ -104,6 +112,23 @@ class EmailChannel(BaseChannel):
 
     async def send(self, msg: OutboundMessage) -> None:
         """Send email via SMTP."""
+        # Filter out virtual/internal IDs (e.g. from CrossChannelTool)
+        # 1. "internal" ID from tools
+        # 2. "channel:id" format from cross-channel messages (e.g. feishu:ou_123)
+        # 3. Non-email IDs (basic regex check)
+        chat_id = msg.chat_id.strip()
+        
+        is_internal = chat_id == "internal" or ":" in chat_id
+        is_email = "@" in chat_id and "." in chat_id
+        
+        if is_internal or not is_email:
+            logger.info(
+                "Skipping Email send to non-email ID '{}'. "
+                "This is expected for internal agent-to-agent messages.",
+                chat_id
+            )
+            return
+
         if not self.config.consent_granted:
             logger.warning("Skip email send: consent_granted is false")
             return
@@ -197,6 +222,52 @@ class EmailChannel(BaseChannel):
             limit=0,
         )
 
+    def _mark_initial_messages_processed(self) -> None:
+        """Fetch all unseen messages once at startup and mark them as processed to avoid processing old emails."""
+        mailbox = self.config.imap_mailbox or "INBOX"
+
+        if self.config.imap_use_ssl:
+            client = imaplib.IMAP4_SSL(self.config.imap_host, self.config.imap_port)
+        else:
+            client = imaplib.IMAP4(self.config.imap_host, self.config.imap_port)
+
+        try:
+            client.login(self.config.imap_username, self.config.imap_password)
+            status, _ = client.select(mailbox)
+            if status != "OK":
+                return
+
+            # Search for UNSEEN messages
+            status, data = client.search(None, "UNSEEN")
+            if status != "OK" or not data:
+                return
+
+            ids = data[0].split()
+            # If there are too many, just take the last 500 to update cache, 
+            # effectively ignoring everything before that.
+            if len(ids) > 500:
+                ids = ids[-500:]
+
+            for imap_id in ids:
+                # Only fetch UID, not body, to save bandwidth
+                status, fetched = client.fetch(imap_id, "(UID)")
+                if status != "OK" or not fetched:
+                    continue
+                
+                uid = self._extract_uid(fetched)
+                if uid:
+                    self._processed_uids.add(uid)
+
+            logger.info(f"Marked {len(ids)} existing unseen emails as processed (skipped).")
+
+        except Exception as e:
+            logger.warning(f"Failed to mark initial messages: {e}")
+        finally:
+            try:
+                client.logout()
+            except Exception:
+                pass
+    
     def fetch_messages_between_dates(
         self,
         start_date: date,
@@ -269,6 +340,13 @@ class EmailChannel(BaseChannel):
                 sender = parseaddr(parsed.get("From", ""))[1].strip().lower()
                 if not sender:
                     continue
+                
+                # Check allow_from list
+                if self.config.allow_from:
+                    allowed_senders = {s.lower() for s in self.config.allow_from}
+                    if sender not in allowed_senders:
+                        logger.debug(f"Skipping email from {sender}: not in allow_from list")
+                        continue
 
                 subject = self._decode_header_value(parsed.get("Subject", ""))
                 date_value = parsed.get("Date", "")

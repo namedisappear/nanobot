@@ -97,6 +97,15 @@ class QQChannel(BaseChannel):
 
     async def send(self, msg: OutboundMessage) -> None:
         """Send a message through QQ."""
+        # Filter out virtual/internal IDs (e.g. from CrossChannelTool)
+        if msg.chat_id == "internal":
+            logger.warning(
+                "Skipping QQ send to invalid ID '{}'. "
+                "This is expected for internal agent-to-agent messages.",
+                msg.chat_id
+            )
+            return
+
         if not self._client:
             logger.warning("QQ client not initialized")
             return

@@ -15,7 +15,9 @@ from loguru import logger
 from nanobot.agent.context import ContextBuilder
 from nanobot.agent.memory import MemoryStore
 from nanobot.agent.subagent import SubagentManager
+from nanobot.agent.tools.channel import CrossChannelTool
 from nanobot.agent.tools.cron import CronTool
+from nanobot.agent.tools.email import SendEmailTool
 from nanobot.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
 from nanobot.agent.tools.message import MessageTool
 from nanobot.agent.tools.registry import ToolRegistry
@@ -123,6 +125,9 @@ class AgentLoop:
         self.tools.register(WebSearchTool(api_key=self.brave_api_key))
         self.tools.register(WebFetchTool())
         self.tools.register(MessageTool(send_callback=self.bus.publish_outbound))
+        self.tools.register(CrossChannelTool(bus=self.bus))
+        if self.channels_config and self.channels_config.email.enabled:
+            self.tools.register(SendEmailTool(config=self.channels_config.email))
         self.tools.register(SpawnTool(manager=self.subagents))
         if self.cron_service:
             self.tools.register(CronTool(self.cron_service))
@@ -331,6 +336,20 @@ class AgentLoop:
         on_progress: Callable[[str], Awaitable[None]] | None = None,
     ) -> OutboundMessage | None:
         """Process a single inbound message and return the response."""
+        
+        # If the message is a delegated message (e.g. from CrossChannelTool),
+        # we treat it as a new session to avoid carrying over the 'history' of the previous agent.
+        # This helps break the "log file" hallucination loop.
+        if msg.sender_id.endswith(":delegated"):
+             logger.info("Processing DELEGATED message from {}. Treating as fresh context.", msg.sender_id)
+             # We don't change the key, but we might want to clear history?
+             # Actually, the key is channel:chat_id.
+             # If feishu:nanobot sends to email:feishu:nanobot
+             # The email agent sees channel='email', chat_id='feishu:nanobot'.
+             # This is a unique session for the email agent.
+             # So it should naturally be clean unless we persisted it.
+             pass
+
         # System messages: parse origin from chat_id ("channel:chat_id")
         if msg.channel == "system":
             channel, chat_id = (msg.chat_id.split(":", 1) if ":" in msg.chat_id

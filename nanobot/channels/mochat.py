@@ -297,6 +297,15 @@ class MochatChannel(BaseChannel):
 
     async def send(self, msg: OutboundMessage) -> None:
         """Send outbound message to session or panel."""
+        # Filter out virtual/internal IDs (e.g. from CrossChannelTool)
+        if msg.chat_id == "internal":
+            logger.warning(
+                "Skipping Mochat send to invalid ID '{}'. "
+                "This is expected for internal agent-to-agent messages.",
+                msg.chat_id
+            )
+            return
+
         if not self.config.claw_token:
             logger.warning("Mochat claw_token missing, skip send")
             return

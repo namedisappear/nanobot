@@ -628,6 +628,15 @@ class FeishuChannel(BaseChannel):
             return
 
         try:
+            # Filter out virtual/internal IDs (e.g. from CrossChannelTool)
+            if not msg.chat_id.startswith(("ou_", "oc_")):
+                logger.warning(
+                    "Skipping Feishu send to invalid ID '{}' (must start with ou_ or oc_). "
+                    "This is expected for internal agent-to-agent messages.",
+                    msg.chat_id
+                )
+                return
+
             receive_id_type = "chat_id" if msg.chat_id.startswith("oc_") else "open_id"
             loop = asyncio.get_running_loop()
 

@@ -1,0 +1,38 @@
+{
+  "agents": {
+    "defaults": {
+      "provider": "deepseek",
+      "model": "deepseek-chat"
+    }
+  },
+  "providers": {
+    "deepseek": {
+      "api_key": "sk-a9a7e41c97194f52aa0087699fddcacb",
+      "api_base": "https://api.deepseek.com"
+    }
+  },
+  "channels": {
+    "feishu": {
+      "enabled": true,
+      "app_id": "cli_a9294795a9f85cd4",
+      "app_secret": "c3KvjCxh5lnLM8a1QCYqHeksshieE2AE",
+      "encrypt_key": "",
+      "verification_token": ""
+    },
+    "email": {
+      "enabled": true,
+      "consent_granted": true,
+      "imap_host": "imap.qq.com",
+      "imap_port": 993,
+      "imap_username": "1915806160@qq.com",
+      "imap_password": "rnqmajdudivsecej",
+      "smtp_host": "smtp.qq.com",
+      "smtp_port": 465,
+      "smtp_username": "1915806160@qq.com",
+      "smtp_password": "rnqmajdudivsecej",
+      "smtp_use_ssl": true,
+      "smtp_use_tls": false,
+      "allow_from": ["1155251596@link.cuhk.edu.hk"]
+    }
+  }
+}
